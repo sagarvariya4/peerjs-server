@@ -14,6 +14,13 @@ export interface IClient {
 	setLastPing(lastPing: number): void;
 
 	send<T>(data: T): void;
+
+	// --- cluster / presence additions ---
+	getClusterId(): string;
+
+	getMetadata(): Record<string, unknown>;
+
+	setMetadata(metadata: Record<string, unknown>): void;
 }
 
 export class Client implements IClient {
@@ -21,10 +28,24 @@ export class Client implements IClient {
 	private readonly token: string;
 	private socket: WebSocket | null = null;
 	private lastPing: number = new Date().getTime();
+	private readonly clusterId: string;
+	private metadata: Record<string, unknown>;
 
-	constructor({ id, token }: { id: string; token: string }) {
+	constructor({
+		id,
+		token,
+		clusterId = "default",
+		metadata = {},
+	}: {
+		id: string;
+		token: string;
+		clusterId?: string;
+		metadata?: Record<string, unknown>;
+	}) {
 		this.id = id;
 		this.token = token;
+		this.clusterId = clusterId;
+		this.metadata = metadata;
 	}
 
 	public getId(): string {
@@ -53,5 +74,17 @@ export class Client implements IClient {
 
 	public send<T>(data: T): void {
 		this.socket?.send(JSON.stringify(data));
+	}
+
+	public getClusterId(): string {
+		return this.clusterId;
+	}
+
+	public getMetadata(): Record<string, unknown> {
+		return this.metadata;
+	}
+
+	public setMetadata(metadata: Record<string, unknown>): void {
+		this.metadata = metadata;
 	}
 }

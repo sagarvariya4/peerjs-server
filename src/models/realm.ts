@@ -9,6 +9,8 @@ export interface IRealm {
 
 	getClientById(clientId: string): IClient | undefined;
 
+	getPeersInCluster(id: string, excludeClientId?: string): IClient[];
+
 	getClientsIdsWithQueue(): string[];
 
 	setClient(client: IClient, id: string): void;
@@ -26,6 +28,7 @@ export interface IRealm {
 
 export class Realm implements IRealm {
 	private readonly clients = new Map<string, IClient>();
+	private readonly clusters = new Map<string, Set<string>>();
 	private readonly messageQueues = new Map<string, IMessageQueue>();
 
 	public getClientsIds(): string[] {
@@ -36,12 +39,37 @@ export class Realm implements IRealm {
 		return this.clients.get(clientId);
 	}
 
+	public getPeersInCluster(id: string, excludeClientId?: string): IClient[] {
+		const cluster = this.clusters.get(id);
+		if (!cluster) return [];
+
+		const peers: IClient[] = [];
+
+		for (const clientId of cluster) {
+			if (clientId === excludeClientId) continue;
+
+			const client = this.clients.get(clientId);
+			if (client) {
+				peers.push(client);
+			}
+		}
+
+		return peers;
+	}
+
 	public getClientsIdsWithQueue(): string[] {
 		return [...this.messageQueues.keys()];
 	}
 
 	public setClient(client: IClient, id: string): void {
 		this.clients.set(id, client);
+
+		const clusterId = client.getClusterId();
+		if (!this.clusters.has(clusterId)) {
+			this.clusters.set(clusterId, new Set());
+		}
+
+		this.clusters.get(clusterId)?.add(id);
 	}
 
 	public removeClientById(id: string): boolean {
@@ -50,6 +78,14 @@ export class Realm implements IRealm {
 		if (!client) return false;
 
 		this.clients.delete(id);
+
+		const clusterId = client.getClusterId();
+
+		const cluster = this.clusters.get(clusterId);
+
+		if (!cluster) return false;
+
+		cluster.delete(id);
 
 		return true;
 	}
