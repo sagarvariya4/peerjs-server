@@ -43,18 +43,18 @@ export class Realm implements IRealm {
 		const cluster = this.clusters.get(id);
 		if (!cluster) return [];
 
-		const clients: IClient[] = [];
+		const peers: IClient[] = [];
 
-		cluster.values().forEach((c) => {
-			if (c !== excludeClientId) {
-				const client = this.clients.get(c);
-				if (client) {
-					clients.push(client);
-				}
+		for (const clientId of cluster) {
+			if (clientId === excludeClientId) continue;
+
+			const client = this.clients.get(clientId);
+			if (client) {
+				peers.push(client);
 			}
-		});
+		}
 
-		return clients;
+		return peers;
 	}
 
 	public getClientsIdsWithQueue(): string[] {
