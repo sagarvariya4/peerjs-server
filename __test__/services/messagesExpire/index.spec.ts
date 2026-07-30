@@ -2,6 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 
 import { Client } from "../../../src/models/client.ts";
 import { Realm } from "../../../src/models/realm.ts";
+import { RoomRegistry } from "../../../src/models/roomRegistry.ts";
 import type { IMessage } from "../../../src/index.js";
 import { MessagesExpire } from "../../../src/services/messagesExpire/index.ts";
 import { MessageHandler } from "../../../src/messageHandler/index.ts";
@@ -19,7 +20,8 @@ describe("MessagesExpire", () => {
 
 	it("should remove client if no read from queue", async () => {
 		const realm = new Realm();
-		const messageHandler = new MessageHandler(realm);
+		const roomRegistry = new RoomRegistry();
+		const messageHandler = new MessageHandler(realm, roomRegistry);
 		const checkInterval = 10;
 		const expireTimeout = 50;
 		const config = {
@@ -54,7 +56,8 @@ describe("MessagesExpire", () => {
 
 	it("should fire EXPIRE message", async () => {
 		const realm = new Realm();
-		const messageHandler = new MessageHandler(realm);
+		const roomRegistry = new RoomRegistry();
+		const messageHandler = new MessageHandler(realm, roomRegistry);
 		const checkInterval = 10;
 		const expireTimeout = 50;
 		const config = {

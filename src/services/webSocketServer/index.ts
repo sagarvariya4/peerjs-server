@@ -6,6 +6,7 @@ import type { IClient } from "../../models/client.ts";
 import { Client } from "../../models/client.ts";
 import type { IConfig } from "../../config/index.ts";
 import type { IRealm } from "../../models/realm.ts";
+import type { IRoomRegistry } from "../../models/roomRegistry.ts";
 import { WebSocketServer as Server } from "ws";
 import type { Server as HttpServer } from "node:http";
 import type { Server as HttpsServer } from "node:https";
@@ -25,16 +26,19 @@ const WS_PATH = "peerjs";
 export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 	public readonly path: string;
 	private readonly realm: IRealm;
+	private readonly roomRegistry: IRoomRegistry;
 	private readonly config: CustomConfig;
 	public readonly socketServer: Server;
 
 	constructor({
 		server,
 		realm,
+		roomRegistry,
 		config,
 	}: {
 		server: HttpServer | HttpsServer;
 		realm: IRealm;
+		roomRegistry: IRoomRegistry;
 		config: CustomConfig;
 	}) {
 		super();
@@ -42,23 +46,29 @@ export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 		this.setMaxListeners(0);
 
 		this.realm = realm;
+		this.roomRegistry = roomRegistry;
 		this.config = config;
 
+		// unused
 		const path = this.config.path;
 		this.path = `${path}${path.endsWith("/") ? "" : "/"}${WS_PATH}`;
 
-		const options: WebSocket.ServerOptions = {
-			path: this.path,
-			server,
-		};
+		const options: WebSocket.ServerOptions = { noServer: true };
 
 		this.socketServer = config.createWebSocketServer
 			? config.createWebSocketServer(options)
 			: new Server(options);
 
+		server.on("upgrade", (req, socket, head) => {
+			this.socketServer.handleUpgrade(req, socket, head, (ws) => {
+				this.socketServer.emit("connection", ws, req);
+			});
+		});
+
 		this.socketServer.on("connection", (socket, req) => {
 			this._onSocketConnection(socket, req);
 		});
+
 		this.socketServer.on("error", (error: Error) => {
 			this._onSocketError(error);
 		});
@@ -71,8 +81,13 @@ export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 		});
 
 		// We are only interested in the query, the base url is therefore not relevant
-		const { searchParams } = new URL(req.url ?? "", "https://peerjs");
-		const { id, token, key } = Object.fromEntries(searchParams.entries());
+		const { searchParams, pathname } = new URL(req.url ?? "", "https://peerjs");
+		const {
+			id,
+			token,
+			key,
+			metadata: rawMetadata,
+		} = Object.fromEntries(searchParams.entries());
 
 		if (!id || !token || !key) {
 			this._sendErrorAndClose(socket, Errors.INVALID_WS_PARAMETERS);
@@ -82,6 +97,16 @@ export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 		if (key !== this.config.key) {
 			this._sendErrorAndClose(socket, Errors.INVALID_KEY);
 			return;
+		}
+
+		let metadata: Record<string, unknown> = {};
+		if (rawMetadata) {
+			try {
+				metadata = JSON.parse(rawMetadata) as Record<string, unknown>;
+			} catch {
+				// Ignore malformed metadata rather than failing the whole
+				// connection over it — the peer just joins with no metadata.
+			}
 		}
 
 		const client = this.realm.getClientById(id);
@@ -104,7 +129,13 @@ export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 			return;
 		}
 
-		this._registerClient({ socket, id, token });
+		this._registerClient({
+			socket,
+			id,
+			token,
+			pathname,
+			metadata,
+		});
 	}
 
 	private _onSocketError(error: Error): void {
@@ -116,10 +147,14 @@ export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 		socket,
 		id,
 		token,
+		pathname,
+		metadata,
 	}: {
 		socket: WebSocket;
 		id: string;
 		token: string;
+		pathname: string;
+		metadata: Record<string, unknown>;
 	}): void {
 		// Check concurrent limit
 		const clientsCount = this.realm.getClientsIds().length;
@@ -129,11 +164,36 @@ export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 			return;
 		}
 
-		const newClient: IClient = new Client({ id, token });
+		const newClient: IClient = new Client({
+			id,
+			token,
+			pathname,
+			metadata,
+		});
 		this.realm.setClient(newClient, id);
 		socket.send(JSON.stringify({ type: MessageType.OPEN }));
 
 		this._configureWS(socket, newClient);
+
+		// --- room join: register membership, tell the room, tell the joiner ---
+		this.roomRegistry.join(newClient);
+
+		const peersInRoom = this.roomRegistry.getPeersInRoom(pathname, id);
+
+		newClient.send({
+			type: MessageType.PEERS_LIST,
+			payload: peersInRoom.map((peer) => ({
+				peerId: peer.getId(),
+				metadata: peer.getMetadata(),
+			})),
+		});
+
+		for (const peer of peersInRoom) {
+			peer.send({
+				type: MessageType.ROOM_PEER_JOINED,
+				payload: { peerId: id, metadata },
+			});
+		}
 	}
 
 	private _configureWS(socket: WebSocket, client: IClient): void {
@@ -143,6 +203,20 @@ export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 		socket.on("close", () => {
 			if (client.getSocket() === socket) {
 				this.realm.removeClientById(client.getId());
+
+				const remainingPeers = this.roomRegistry.getPeersInRoom(
+					client.getPathname(),
+					client.getId(),
+				);
+				this.roomRegistry.leave(client);
+
+				for (const peer of remainingPeers) {
+					peer.send({
+						type: MessageType.ROOM_PEER_LEFT,
+						payload: { peerId: client.getId() },
+					});
+				}
+
 				this.emit("close", client);
 			}
 		});

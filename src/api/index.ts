@@ -22,7 +22,9 @@ export const Api = ({
 		res.send(publicContent);
 	});
 
-	app.use("/:key", PublicApi({ config, realm }));
+	// /:key = "peerjs" from Peer Class of client package
+	// app.use("/:key", PublicApi({ config, realm }));
+	app.use(/.*\/?peerjs/, PublicApi({ config, realm }));
 
 	return app;
 };

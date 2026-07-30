@@ -4,6 +4,8 @@ import type { Server as HttpsServer } from "node:https";
 import path from "node:path";
 import type { IRealm } from "./models/realm.ts";
 import { Realm } from "./models/realm.ts";
+import type { IRoomRegistry } from "./models/roomRegistry.ts";
+import { RoomRegistry } from "./models/roomRegistry.ts";
 import { CheckBrokenConnections } from "./services/checkBrokenConnections/index.ts";
 import type { IMessagesExpire } from "./services/messagesExpire/index.ts";
 import { MessagesExpire } from "./services/messagesExpire/index.ts";
@@ -37,7 +39,8 @@ export const createInstance = ({
 }): void => {
 	const config = options;
 	const realm: IRealm = new Realm();
-	const messageHandler = new MessageHandler(realm);
+	const roomRegistry: IRoomRegistry = new RoomRegistry();
+	const messageHandler = new MessageHandler(realm, roomRegistry);
 
 	const api = Api({ config, realm, corsOptions: options.corsOptions });
 	const messagesExpire: IMessagesExpire = new MessagesExpire({
@@ -64,6 +67,7 @@ export const createInstance = ({
 	const wss: IWebSocketServer = new WebSocketServer({
 		server,
 		realm,
+		roomRegistry,
 		config: customConfig,
 	});
 

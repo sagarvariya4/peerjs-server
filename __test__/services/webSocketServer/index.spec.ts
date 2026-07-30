@@ -3,6 +3,7 @@ import { describe, expect, it } from "@jest/globals";
 import { Server, WebSocket } from "mock-socket";
 import type { Server as HttpServer } from "node:http";
 import { Realm } from "../../../src/models/realm.ts";
+import { RoomRegistry } from "../../../src/models/roomRegistry.ts";
 import { WebSocketServer } from "../../../src/services/webSocketServer/index.ts";
 import { Errors, MessageType } from "../../../src/enums.ts";
 import { wait } from "../../utils.ts";
@@ -60,15 +61,18 @@ const createTestServer = ({
 	realm,
 	config,
 	url,
+	roomRegistry,
 }: {
 	realm: Realm;
 	config: { path: string; key: string; concurrent_limit: number };
 	url: string;
+	roomRegistry: RoomRegistry;
 }): Destroyable<WebSocketServer> => {
 	const server = new Server(url) as Server & HttpServer;
 	const webSocketServer: Destroyable<WebSocketServer> = new WebSocketServer({
 		server,
 		realm,
+		roomRegistry,
 		config,
 	});
 
@@ -134,18 +138,25 @@ const createTestServer = ({
 describe("WebSocketServer", () => {
 	it("should return valid path", () => {
 		const realm = new Realm();
+		const roomRegistry = new RoomRegistry();
 		const config = { path: "/", key: "testKey", concurrent_limit: 1 };
 		const config2 = { ...config, path: "path" };
 		const server = new Server("path1") as Server & HttpServer;
 		const server2 = new Server("path2") as Server & HttpServer;
 
-		const webSocketServer = new WebSocketServer({ server, realm, config });
+		const webSocketServer = new WebSocketServer({
+			server,
+			realm,
+			roomRegistry,
+			config,
+		});
 
 		expect(webSocketServer.path).toBe("/peerjs");
 
 		const webSocketServer2 = new WebSocketServer({
 			server: server2,
 			realm,
+			roomRegistry,
 			config: config2,
 		});
 
@@ -157,6 +168,7 @@ describe("WebSocketServer", () => {
 
 	it(`should check client's params`, async () => {
 		const realm = new Realm();
+		const roomRegistry = new RoomRegistry();
 		const config = { path: "/", key: "testKey", concurrent_limit: 1 };
 		const fakeURL = "ws://localhost:8080/peerjs";
 
@@ -164,7 +176,12 @@ describe("WebSocketServer", () => {
 			url: string,
 			validError: Errors = Errors.INVALID_WS_PARAMETERS,
 		): Promise<boolean> => {
-			const webSocketServer = createTestServer({ url, realm, config });
+			const webSocketServer = createTestServer({
+				url,
+				realm,
+				config,
+				roomRegistry,
+			});
 
 			const ws = new WebSocket(url);
 
@@ -192,13 +209,19 @@ describe("WebSocketServer", () => {
 
 	it(`should check concurrent limit`, async () => {
 		const realm = new Realm();
+		const roomRegistry = new RoomRegistry();
 		const config = { path: "/", key: "testKey", concurrent_limit: 1 };
 		const fakeURL = "ws://localhost:8080/peerjs";
 
 		const createClient = (id: string): Destroyable<WebSocket> => {
 			// id in the path ensures that all mock servers listen on different urls
 			const url = `${fakeURL}${id}?key=${config.key}&id=${id}&token=${id}`;
-			const webSocketServer = createTestServer({ url, realm, config });
+			const webSocketServer = createTestServer({
+				url,
+				realm,
+				config,
+				roomRegistry,
+			});
 			const ws: Destroyable<WebSocket> = new WebSocket(url);
 
 			ws.destroy = async (): Promise<void> => {
