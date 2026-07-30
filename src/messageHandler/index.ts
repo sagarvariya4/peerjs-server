@@ -1,5 +1,10 @@
 import { MessageType } from "../enums.ts";
-import { HeartbeatHandler, TransmissionHandler } from "./handlers/index.ts";
+import {
+	HeartbeatHandler,
+	TransmissionHandler,
+	ListPeersHandler,
+	SetMetadataHandler,
+} from "./handlers/index.ts";
 import type { IHandlersRegistry } from "./handlersRegistry.ts";
 import { HandlersRegistry } from "./handlersRegistry.ts";
 import type { IClient } from "../models/client.ts";
@@ -18,6 +23,8 @@ export class MessageHandler implements IMessageHandler {
 	) {
 		const transmissionHandler: Handler = TransmissionHandler({ realm });
 		const heartbeatHandler: Handler = HeartbeatHandler;
+		const listPeersHandler: Handler = ListPeersHandler({ realm });
+		const setMetadataHandler: Handler = SetMetadataHandler({ realm });
 
 		const handleTransmission: Handler = (
 			client: IClient | undefined,
@@ -33,6 +40,14 @@ export class MessageHandler implements IMessageHandler {
 
 		const handleHeartbeat = (client: IClient | undefined, message: IMessage) =>
 			heartbeatHandler(client, message);
+
+		const handleListPeers = (client: IClient | undefined, message: IMessage) =>
+			listPeersHandler(client, message);
+
+		const handleSetMetadata = (
+			client: IClient | undefined,
+			message: IMessage,
+		) => setMetadataHandler(client, message);
 
 		this.handlersRegistry.registerHandler(
 			MessageType.HEARTBEAT,
@@ -57,6 +72,22 @@ export class MessageHandler implements IMessageHandler {
 		this.handlersRegistry.registerHandler(
 			MessageType.EXPIRE,
 			handleTransmission,
+		);
+		// RELAY reuses the exact same dst-based forwarding as OFFER/ANSWER/
+		// CANDIDATE: client sends { type: 'RELAY', dst: targetPeerId, payload },
+		// and the server hands the payload straight to that peer's socket —
+		// no WebRTC connection required.
+		this.handlersRegistry.registerHandler(
+			MessageType.RELAY,
+			handleTransmission,
+		);
+		this.handlersRegistry.registerHandler(
+			MessageType.LIST_PEERS,
+			handleListPeers,
+		);
+		this.handlersRegistry.registerHandler(
+			MessageType.SET_METADATA,
+			handleSetMetadata,
 		);
 	}
 

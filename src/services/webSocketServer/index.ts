@@ -44,21 +44,26 @@ export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 		this.realm = realm;
 		this.config = config;
 
+		// unused
 		const path = this.config.path;
 		this.path = `${path}${path.endsWith("/") ? "" : "/"}${WS_PATH}`;
 
-		const options: WebSocket.ServerOptions = {
-			path: this.path,
-			server,
-		};
+		const options: WebSocket.ServerOptions = { noServer: true };
 
 		this.socketServer = config.createWebSocketServer
 			? config.createWebSocketServer(options)
 			: new Server(options);
 
+		server.on("upgrade", (req, socket, head) => {
+			this.socketServer.handleUpgrade(req, socket, head, (ws) => {
+				this.socketServer.emit("connection", ws, req);
+			});
+		});
+
 		this.socketServer.on("connection", (socket, req) => {
 			this._onSocketConnection(socket, req);
 		});
+
 		this.socketServer.on("error", (error: Error) => {
 			this._onSocketError(error);
 		});
@@ -71,8 +76,16 @@ export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 		});
 
 		// We are only interested in the query, the base url is therefore not relevant
-		const { searchParams } = new URL(req.url ?? "", "https://peerjs");
-		const { id, token, key } = Object.fromEntries(searchParams.entries());
+		const { searchParams, pathname: clusterId } = new URL(
+			req.url ?? "",
+			"https://peerjs",
+		);
+		const {
+			id,
+			token,
+			key,
+			metadata: rawMetadata,
+		} = Object.fromEntries(searchParams.entries());
 
 		if (!id || !token || !key) {
 			this._sendErrorAndClose(socket, Errors.INVALID_WS_PARAMETERS);
@@ -82,6 +95,16 @@ export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 		if (key !== this.config.key) {
 			this._sendErrorAndClose(socket, Errors.INVALID_KEY);
 			return;
+		}
+
+		let metadata: Record<string, unknown> = {};
+		if (rawMetadata) {
+			try {
+				metadata = JSON.parse(rawMetadata) as Record<string, unknown>;
+			} catch {
+				// Ignore malformed metadata rather than failing the whole
+				// connection over it — the peer just joins with no metadata.
+			}
 		}
 
 		const client = this.realm.getClientById(id);
@@ -104,7 +127,13 @@ export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 			return;
 		}
 
-		this._registerClient({ socket, id, token });
+		this._registerClient({
+			socket,
+			id,
+			token,
+			clusterId,
+			metadata,
+		});
 	}
 
 	private _onSocketError(error: Error): void {
@@ -116,10 +145,14 @@ export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 		socket,
 		id,
 		token,
+		clusterId,
+		metadata,
 	}: {
 		socket: WebSocket;
 		id: string;
 		token: string;
+		clusterId: string;
+		metadata: Record<string, unknown>;
 	}): void {
 		// Check concurrent limit
 		const clientsCount = this.realm.getClientsIds().length;
@@ -129,11 +162,34 @@ export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 			return;
 		}
 
-		const newClient: IClient = new Client({ id, token });
+		const newClient: IClient = new Client({
+			id,
+			token,
+			clusterId,
+			metadata,
+		});
 		this.realm.setClient(newClient, id);
 		socket.send(JSON.stringify({ type: MessageType.OPEN }));
 
 		this._configureWS(socket, newClient);
+
+		// --- cluster join: register membership, tell the cluster, tell the joiner ---
+		const peersInCluster = this.realm.getPeersInCluster(clusterId, id);
+
+		newClient.send({
+			type: MessageType.PEERS_LIST,
+			payload: peersInCluster.map((peer) => ({
+				peerId: peer.getId(),
+				metadata: peer.getMetadata(),
+			})),
+		});
+
+		for (const peer of peersInCluster) {
+			peer.send({
+				type: MessageType.CLUSTER_PEER_JOINED,
+				payload: { peerId: id, metadata },
+			});
+		}
 	}
 
 	private _configureWS(socket: WebSocket, client: IClient): void {
@@ -143,6 +199,19 @@ export class WebSocketServer extends EventEmitter implements IWebSocketServer {
 		socket.on("close", () => {
 			if (client.getSocket() === socket) {
 				this.realm.removeClientById(client.getId());
+
+				const remainingPeers = this.realm.getPeersInCluster(
+					client.getClusterId(),
+					client.getId(),
+				);
+
+				for (const peer of remainingPeers) {
+					peer.send({
+						type: MessageType.CLUSTER_PEER_LEFT,
+						payload: { peerId: client.getId() },
+					});
+				}
+
 				this.emit("close", client);
 			}
 		});
