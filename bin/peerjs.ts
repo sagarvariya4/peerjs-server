@@ -128,7 +128,9 @@ const server = PeerServer(opts, (server) => {
 		userPath || "/",
 	);
 
-	const shutdownApp = () => {
+	const shutdownApp = (signal: string) => {
+		console.log(`Received ${signal}`);
+
 		server.close(() => {
 			console.log("Http server closed.");
 
@@ -136,8 +138,12 @@ const server = PeerServer(opts, (server) => {
 		});
 	};
 
-	process.on("SIGINT", shutdownApp);
-	process.on("SIGTERM", shutdownApp);
+	process.on("SIGINT", () => {
+		shutdownApp("SIGINT");
+	});
+	process.on("SIGTERM", () => {
+		shutdownApp("SIGTERM");
+	});
 });
 
 server.on("connection", (client) => {

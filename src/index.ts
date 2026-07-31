@@ -69,6 +69,17 @@ function PeerServer(
 		server = http.createServer(app);
 	}
 
+	app.use((req, _res, next) => {
+		console.log("========== REQUEST ==========");
+		console.log("Date:", new Date().toISOString());
+		console.log("Method:", req.method);
+		console.log("URL:", req.originalUrl);
+		console.log("User-Agent:", req.headers["user-agent"]);
+		console.log("IP:", req.ip);
+		console.log("=============================");
+		next();
+	});
+
 	const peerjs = ExpressPeerServer(server, newOptions);
 	app.use(peerjs);
 
