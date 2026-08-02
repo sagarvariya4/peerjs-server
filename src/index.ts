@@ -1,4 +1,4 @@
-import express, { type Express } from "express";
+import express, { type Express, type Request, type Response } from "express";
 import http from "node:http";
 import https from "node:https";
 
@@ -11,6 +11,20 @@ import type { IMessage } from "./models/message.ts";
 
 export type { MessageType } from "./enums.ts";
 export type { IConfig, PeerServerEvents, IClient, IMessage };
+
+// Helper function to extract a clean public IP (strips ::ffff: prefix)
+const getCleanIp = (req: Request): string => {
+	const forwarded: string = req.headers["x-forwarded-for"] as string;
+
+	let ip =
+		req.ip ?? forwarded.split(",")[0]?.trim() ?? req.socket.remoteAddress ?? "";
+
+	if (ip.startsWith("::ffff:")) {
+		ip = ip.replace("::ffff:", "");
+	}
+
+	return ip;
+};
 
 function ExpressPeerServer(
 	server: https.Server | http.Server,
@@ -55,6 +69,16 @@ function PeerServer(
 		...options,
 	};
 
+	// Ensure Express trusts Railway proxy headers
+	if (newOptions.proxied) {
+		app.set(
+			"trust proxy",
+			newOptions.proxied === "false" ? false : !!newOptions.proxied,
+		);
+	} else {
+		app.set("trust proxy", true);
+	}
+
 	const port = newOptions.port;
 	const host = newOptions.host;
 
@@ -69,13 +93,14 @@ function PeerServer(
 		server = http.createServer(app);
 	}
 
-	app.use((req, _res, next) => {
+	// Request logging middleware
+	app.use((req: Request, _res: Response, next) => {
 		console.log("========== REQUEST ==========");
 		console.log("Date:", new Date().toISOString());
 		console.log("Method:", req.method);
 		console.log("URL:", req.originalUrl);
 		console.log("User-Agent:", req.headers["user-agent"]);
-		console.log("IP:", req.ip);
+		console.log("IP:", getCleanIp(req));
 		console.log("=============================");
 		next();
 	});
